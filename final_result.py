@@ -416,7 +416,7 @@ def main():
         
         if parsed_games:
             # Save to CSV with team runs data and team scores data
-            filename = f"mlb_odds_with_runs_{date_str}.csv"
+            filename = f"mlb_odds_overunder_prediction_{date_str}.csv"
             save_to_csv(parsed_games, filename, team_runs_data, team_scores_data)
             
             # Display sample data
@@ -447,7 +447,7 @@ def main():
                 print(f"Successfully fetched data for {len(odds_data)} games")
                 parsed_games = parse_odds_data(odds_data)
                 if parsed_games:
-                    filename = f"mlb_odds_with_runs_{today_str}.csv"
+                    filename = f"mlb_odds_overunder_prediction_{today_str}.csv"
                     save_to_csv(parsed_games, filename, team_runs_data, team_scores_data)
             else:
                 print("No data available for today either")
