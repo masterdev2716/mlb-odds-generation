@@ -203,7 +203,7 @@ def save_to_csv(games_data, filename, team_runs_data, team_scores_data):
     try:
         with open(full_path, 'w', newline='', encoding='utf-8') as csvfile:
             # Write header with new columns
-            csvfile.write("GameID,DateTime,Away/Home Team,Team Runs,Team Score,Prediction Odds,Prediction OverUnder\n")
+            csvfile.write("GameID,DateTime,Away/Home Team,Team Score,Prediction Odds,Prediction OverUnder\n")
             
             # Write data in the format matching the uploaded image
             for game in games_data:
@@ -217,18 +217,16 @@ def save_to_csv(games_data, filename, team_runs_data, team_scores_data):
                 away_score = get_team_score(away_team, team_scores_data)
                 home_score = get_team_score(home_team, team_scores_data)
                 
-                # First row: GameID, DateTime, AwayTeam, AwayTeam Runs, AwayTeam Score, Prediction Odds, Prediction OverUnder
-                away_runs_str = f"{away_runs:.1f}" if away_runs is not None else "0.0"
+                # First row: GameID, DateTime, AwayTeam, AwayTeam Score, Prediction Odds, Prediction OverUnder
                 away_score_str = f"{away_score:.1f}" if away_score is not None else "0.0"
                 prediction_odds_str = format_odds_range(prediction_odds) if prediction_odds is not None else "0 - 18"
                 prediction_overunder_str = prediction_overunder if prediction_overunder else ""
-                csvfile.write(f"{game['GameID']},{game['DateTime']},{away_team},{away_runs_str},{away_score_str},{prediction_odds_str},{prediction_overunder_str}\n")
+                csvfile.write(f"{game['GameID']},{game['DateTime']},{away_team},{away_score_str},{prediction_odds_str},{prediction_overunder_str}\n")
                 
-                # Second row: empty GameID, empty DateTime, HomeTeam, HomeTeam Runs, HomeTeam Score, mirrored Prediction Odds, empty Prediction OverUnder
-                home_runs_str = f"{home_runs:.1f}" if home_runs is not None else "0.0"
+                # Second row: empty GameID, empty DateTime, HomeTeam, HomeTeam Score, mirrored Prediction Odds, empty Prediction OverUnder
                 home_score_str = f"{home_score:.1f}" if home_score is not None else "0.0"
                 mirrored_odds_str = invert_odds_range(prediction_odds_str)
-                csvfile.write(f",,{home_team},{home_runs_str},{home_score_str},{mirrored_odds_str},\n")
+                csvfile.write(f",,{home_team},{home_score_str},{mirrored_odds_str},\n")
         
         print(f"Data successfully saved to {full_path}")
         print(f"Total games saved: {len(games_data)}")
@@ -242,12 +240,75 @@ def save_to_csv(games_data, filename, team_runs_data, team_scores_data):
             away_score = get_team_score(away_team, team_scores_data)
             home_score = get_team_score(home_team, team_scores_data)
             print(f"  Game {i+1}: {away_team} vs {home_team}")
-            print(f"    {away_team} runs: {away_runs:.1f}, score: {away_score:.1f}")
-            print(f"    {home_team} runs: {home_runs:.1f}, score: {home_score:.1f}")
+            print(f"    {away_team} score: {away_score:.1f}")
+            print(f"    {home_team} score: {home_score:.1f}")
             print(f"    Prediction Odds: {prediction_odds:.1f}, Over/Under: {prediction_overunder}")
         
     except Exception as e:
         print(f"Error saving to CSV: {e}")
+
+def save_to_text(games_data, filename_txt, team_runs_data, team_scores_data):
+    """
+    Save a plain text list matching the screenshot format:
+    "AWAY at HOME   -128/8.42"
+    Also prints the same lines to stdout.
+    """
+    if not games_data:
+        return
+
+    results_dir = "results"
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+
+    full_path_txt = os.path.join(results_dir, filename_txt)
+
+    lines = []
+    for game in games_data:
+        away_team = game['AwayTeam']
+        home_team = game['HomeTeam']
+
+        # Prediction odds and OU
+        _away_runs, _home_runs, prediction_odds, prediction_overunder = get_team_runs(
+            away_team, home_team, team_runs_data, team_scores_data
+        )
+        # If odds are positive, flip to negative and add star to home team
+        if isinstance(prediction_odds, (int, float)) and prediction_odds >= 0:
+            adjusted_odds_value = -int(abs(prediction_odds))
+            home_team_display = f"{home_team}*"
+        else:
+            # Keep original negative odds; best-effort cast if needed
+            adjusted_odds_value = int(prediction_odds) if isinstance(prediction_odds, (int, float)) else int(str(prediction_odds))
+            home_team_display = home_team
+
+        # Odds: signed integer (e.g., -128)
+        odds_signed_str = f"{adjusted_odds_value:+d}"
+
+        # Over/Under: 2 decimals, fallback to average of team scores if missing
+        if prediction_overunder is None or str(prediction_overunder).strip() == "":
+            away_score = get_team_score(away_team, team_scores_data)
+            home_score = get_team_score(home_team, team_scores_data)
+            ou_value = max(7.0, round((away_score + home_score) / 2.0 + 7.5, 2))
+        else:
+            try:
+                ou_value = float(prediction_overunder)
+            except Exception:
+                ou_value = 9.0
+        ou_str = f"{ou_value:.2f}"
+
+        matchup_str = f"{away_team} at {home_team_display}"
+        # Align like the screenshot: left part padded to 14-16 chars depending on team codes length
+        line = f"{matchup_str:<16} {odds_signed_str}/{ou_str}"
+        lines.append(line)
+
+    # Write file
+    with open(full_path_txt, 'w', encoding='utf-8') as f:
+        for line in lines:
+            f.write(line + "\n")
+
+    # Print to console
+    print("\nText output (matching screenshot):")
+    for line in lines:
+        print(line)
 
 def calculate_winning_probability(away_runs, home_runs, away_score, home_score):
     """
@@ -418,6 +479,10 @@ def main():
             # Save to CSV with team runs data and team scores data
             filename = f"mlb_odds_overunder_prediction_{date_str}.csv"
             save_to_csv(parsed_games, filename, team_runs_data, team_scores_data)
+
+            # Additionally, save text output matching screenshot
+            filename_txt = f"mlb_odds_overunder_prediction_{date_str}.txt"
+            save_to_text(parsed_games, filename_txt, team_runs_data, team_scores_data)
             
             # Display sample data
             print("\nSample data from first game:")
@@ -428,8 +493,8 @@ def main():
                 home_score = get_team_score(sample_game['HomeTeam'], team_scores_data)
                 print(f"  GameID: {sample_game['GameID']}")
                 print(f"  DateTime: {sample_game['DateTime']}")
-                print(f"  AwayTeam: {sample_game['AwayTeam']} (Runs: {away_runs:.1f}, Score: {away_score:.1f})")
-                print(f"  HomeTeam: {sample_game['HomeTeam']} (Runs: {home_runs:.1f}, Score: {home_score:.1f})")
+                print(f"  AwayTeam: {sample_game['AwayTeam']} (Score: {away_score:.1f})")
+                print(f"  HomeTeam: {sample_game['HomeTeam']} (Score: {home_score:.1f})")
                 print(f"  Prediction Odds: {format_odds_range(prediction_odds)}, Over/Under: {prediction_overunder}")
         else:
             print("No games data to parse")
@@ -449,6 +514,8 @@ def main():
                 if parsed_games:
                     filename = f"mlb_odds_overunder_prediction_{today_str}.csv"
                     save_to_csv(parsed_games, filename, team_runs_data, team_scores_data)
+                    filename_txt = f"mlb_odds_overunder_prediction_{today_str}.txt"
+                    save_to_text(parsed_games, filename_txt, team_runs_data, team_scores_data)
             else:
                 print("No data available for today either")
         else:

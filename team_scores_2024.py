@@ -25,8 +25,8 @@ def fetch_player_season_projections():
         print(f"Error fetching 2024 season projections: {e}")
         return None
 
-def extract_six_factors_from_player(player):
-    """Extract only the 6 key factors from player season projection data"""
+def extract_seven_factors_from_player(player):
+    """Extract the 7 key factors from player season projection data"""
     
     # Validate team name first
     team = player.get('Team', '')
@@ -192,63 +192,104 @@ def extract_six_factors_from_player(player):
         form_factors['Projected Ks'] = int(k_recent)
         form_score += k_recent * 0.3  # Reduced from 0.75
     
-    # 6. CONSISTENCY SCORE (replacing injury risk)
-    consistency_score = 0
-    consistency_factors = {}
+    # 6. UMPIRE IMPACT (replacing consistency)
+    umpire_impact_score = 0
+    umpire_impact_factors = {}
     
-    # Batting average consistency (higher BA = more consistent)
-    if pd.notna(player.get('BattingAverage')):
-        ba = player['BattingAverage']
-        if ba > 0.3:
-            consistency_score += 4  # Reduced from 10
-            consistency_factors['High BA'] = f"{ba:.3f}"
-        elif ba > 0.25:
-            consistency_score += 3  # Reduced from 7.5
-            consistency_factors['Good BA'] = f"{ba:.3f}"
-        elif ba > 0.2:
-            consistency_score += 2  # Reduced from 5
-            consistency_factors['Decent BA'] = f"{ba:.3f}"
+    # Strike zone discipline (walks vs strikeouts ratio)
+    if pd.notna(player.get('Walks')) and pd.notna(player.get('Strikeouts')):
+        walks = player['Walks']
+        strikeouts = player['Strikeouts']
+        if strikeouts > 0:
+            bb_k_ratio = walks / strikeouts
+            umpire_impact_factors['BB/K Ratio'] = f"{bb_k_ratio:.2f}"
+            umpire_impact_score += bb_k_ratio * 8  # New factor
     
-    # On-base percentage consistency
-    if pd.notna(player.get('OnBasePercentage')):
-        obp = player['OnBasePercentage']
-        if obp > 0.4:
-            consistency_score += 3  # Reduced from 7.5
-            consistency_factors['High OBP'] = f"{obp:.3f}"
-        elif obp > 0.35:
-            consistency_score += 2  # Reduced from 5
-            consistency_factors['Good OBP'] = f"{obp:.3f}"
+    # For pitchers: Control (walks per inning)
+    if is_pitcher and pd.notna(player.get('Walks')) and pd.notna(player.get('InningsPitched')):
+        walks = player['Walks']
+        innings = player['InningsPitched']
+        if innings > 0:
+            bb_per_ip = walks / innings
+            umpire_impact_factors['BB/IP'] = f"{bb_per_ip:.2f}"
+            # Lower BB/IP is better, so we invert the score
+            umpire_impact_score += max(0, (2.0 - bb_per_ip) * 6)
     
-    # For pitchers: ERA consistency
-    if is_pitcher and pd.notna(player.get('EarnedRunAverage')):
-        era = player['EarnedRunAverage']
-        if era < 3.0:
-            consistency_score += 4  # Reduced from 10
-            consistency_factors['Excellent ERA'] = f"{era:.2f}"
-        elif era < 4.0:
-            consistency_score += 3  # Reduced from 7.5
-            consistency_factors['Good ERA'] = f"{era:.2f}"
-        elif era < 5.0:
-            consistency_score += 2  # Reduced from 5
-            consistency_factors['Decent ERA'] = f"{era:.2f}"
+    # HBP (hit by pitch) - can indicate umpire favoritism
+    if pd.notna(player.get('HitByPitch')):
+        hbp = player['HitByPitch']
+        umpire_impact_factors['HBP'] = int(hbp)
+        umpire_impact_score += hbp * 0.8  # New factor
     
-    # Playing time consistency (projected AB/IP)
-    if pd.notna(player.get('AtBats')) and player.get('AtBats', 0) > 400:
-        consistency_score += 2  # Reduced from 5
-        consistency_factors['High AB Projection'] = True
+    # For pitchers: Wild pitches
+    if is_pitcher and pd.notna(player.get('WildPitches')):
+        wp = player['WildPitches']
+        umpire_impact_factors['Wild Pitches'] = int(wp)
+        # Penalty for wild pitches
+        umpire_impact_score -= wp * 0.6
     
-    if pd.notna(player.get('InningsPitched')) and player.get('InningsPitched', 0) > 150:
-        consistency_score += 2  # Reduced from 5
-        consistency_factors['High IP Projection'] = True
+    # 7. BULLPEN FATIGUE
+    bullpen_fatigue_score = 0
+    bullpen_fatigue_factors = {}
     
-    # Calculate overall ability score with very conservative weights
+    # For pitchers: Innings pitched workload
+    if is_pitcher and pd.notna(player.get('InningsPitched')):
+        innings = player['InningsPitched']
+        bullpen_fatigue_factors['Innings'] = f"{innings:.1f}"
+        # Higher innings = more fatigue risk
+        if innings > 200:
+            bullpen_fatigue_score -= 3  # Heavy workload penalty
+        elif innings > 150:
+            bullpen_fatigue_score -= 1  # Moderate workload penalty
+        elif innings > 100:
+            bullpen_fatigue_score += 1  # Good workload balance
+        else:
+            bullpen_fatigue_score += 2  # Fresh arm bonus
+    
+    # For pitchers: Appearances (games played)
+    if is_pitcher and pd.notna(player.get('Games')):
+        games = player['Games']
+        bullpen_fatigue_factors['Games'] = int(games)
+        # More appearances = more fatigue
+        if games > 70:
+            bullpen_fatigue_score -= 2  # High appearance penalty
+        elif games > 50:
+            bullpen_fatigue_score -= 1  # Moderate appearance penalty
+        elif games > 30:
+            bullpen_fatigue_score += 1  # Good appearance balance
+    
+    # For pitchers: Saves (closer workload)
+    if is_pitcher and pd.notna(player.get('Saves')):
+        saves = player['Saves']
+        if saves > 0:
+            bullpen_fatigue_factors['Saves'] = int(saves)
+            # High save count = more pressure situations
+            if saves > 40:
+                bullpen_fatigue_score -= 2  # High pressure penalty
+            elif saves > 25:
+                bullpen_fatigue_score -= 1  # Moderate pressure penalty
+    
+    # For batters: Games played (position player fatigue)
+    if not is_pitcher and pd.notna(player.get('Games')):
+        games = player['Games']
+        bullpen_fatigue_factors['Games'] = int(games)
+        # More games = more fatigue
+        if games > 150:
+            bullpen_fatigue_score -= 1  # High game count penalty
+        elif games > 120:
+            bullpen_fatigue_score += 0  # Neutral
+        else:
+            bullpen_fatigue_score += 1  # Fresh player bonus
+    
+    # Calculate overall ability score with updated weights for 7 factors
     overall_score = (
-        hitting_score * 0.35 +
-        pitching_score * 0.35 +
+        hitting_score * 0.30 +
+        pitching_score * 0.30 +
         clutch_score * 0.15 +
         speed_score * 0.08 +
         form_score * 0.04 +
-        consistency_score * 0.03
+        umpire_impact_score * 0.08 +
+        bullpen_fatigue_score * 0.05
     )
     
     return {
@@ -257,13 +298,14 @@ def extract_six_factors_from_player(player):
         'Position': position,
         'PlayerType': 'Pitcher' if is_pitcher else 'Batter',
         
-        # The 6 Key Factors Only
+        # The 7 Key Factors
         'Hitting_Score': round(hitting_score, 1),
         'Pitching_Score': round(pitching_score, 1),
         'Clutch_Score': round(clutch_score, 1),
         'Speed_Score': round(speed_score, 1),
         'Form_Score': round(form_score, 1),
-        'Consistency_Score': consistency_score,
+        'Umpire_Impact_Score': round(umpire_impact_score, 1),
+        'Bullpen_Fatigue_Score': round(bullpen_fatigue_score, 1),
         'Overall_Score': round(overall_score, 1),
         
         # Key factor details (simplified)
@@ -272,12 +314,13 @@ def extract_six_factors_from_player(player):
         'Clutch_Key': ' | '.join([f"{k}: {v}" for k, v in clutch_factors.items()]) if clutch_factors else '',
         'Speed_Key': ' | '.join([f"{k}: {v}" for k, v in speed_factors.items()]) if speed_factors else '',
         'Form_Key': ' | '.join([f"{k}: {v}" for k, v in form_factors.items()]) if form_factors else '',
-        'Consistency_Key': ' | '.join([f"{k}: {v}" for k, v in consistency_factors.items()]) if consistency_factors else ''
+        'Umpire_Impact_Key': ' | '.join([f"{k}: {v}" for k, v in umpire_impact_factors.items()]) if umpire_impact_factors else '',
+        'Bullpen_Fatigue_Key': ' | '.join([f"{k}: {v}" for k, v in bullpen_fatigue_factors.items()]) if bullpen_fatigue_factors else ''
     }
 
-def fetch_six_factors_for_2024_season():
-    """Fetch only the 6 key factors for all players for the 2024 season"""
-    print(f"Fetching SIX KEY FACTORS for ALL TEAMS for 2024 SEASON...")
+def fetch_seven_factors_for_2024_season():
+    """Fetch the 7 key factors for all players for the 2024 season"""
+    print(f"Fetching SEVEN KEY FACTORS for ALL TEAMS for 2024 SEASON...")
     
     # Fetch season projections
     projections = fetch_player_season_projections()
@@ -286,7 +329,7 @@ def fetch_six_factors_for_2024_season():
         print(f"No player projections found for 2024 season")
         return [], projections
     
-    all_players_six_factors = []
+    all_players_seven_factors = []
     
     # Process each player
     print(f"Processing {len(projections)} players...")
@@ -302,44 +345,24 @@ def fetch_six_factors_for_2024_season():
             filtered_count += 1
             continue
         
-        player_six_factors = extract_six_factors_from_player(player)
-        if player_six_factors is not None:  # Only add players with valid team names
-            all_players_six_factors.append(player_six_factors)
+        player_seven_factors = extract_seven_factors_from_player(player)
+        if player_seven_factors is not None:  # Only add players with valid team names
+            all_players_seven_factors.append(player_seven_factors)
     
     print(f"Filtered out {filtered_count} players with null/empty team names")
-    print(f"Remaining players: {len(all_players_six_factors)}")
+    print(f"Remaining players: {len(all_players_seven_factors)}")
     
-    return all_players_six_factors, projections
+    return all_players_seven_factors, projections
 
-def calculate_team_scores(players_data):
-    """Calculate team scores based on the sum of all players' overall scores"""
+def prepare_players_data(players_data):
+    """Prepare player data for output"""
     df = pd.DataFrame(players_data)
-    
-    # Calculate team scores by summing overall scores for each team
-    team_scores = df.groupby('Team')['Overall_Score'].sum().reset_index()
-    team_scores.columns = ['Team', 'Team_Score']
-    
-    # Round team scores to 1 decimal place
-    team_scores['Team_Score'] = team_scores['Team_Score'].round(1)
-    
-    # Sort teams by score (highest first)
-    team_scores = team_scores.sort_values('Team_Score', ascending=False)
-    
-    return team_scores
-
-def add_team_scores_to_players(players_data):
-    """Add team score column to each player's data"""
-    df = pd.DataFrame(players_data)
-    team_scores = calculate_team_scores(players_data)
-    
-    # Merge team scores with player data
-    df_with_team_scores = df.merge(team_scores, on='Team', how='left')
     
     # Convert back to list of dictionaries
-    return df_with_team_scores.to_dict('records')
+    return df.to_dict('records')
 
-def display_six_factors_summary(players_data, season="2024"):
-    """Display a summary of the 6 key factors"""
+def display_seven_factors_summary(players_data, season="2024"):
+    """Display a summary of the 7 key factors"""
     
     if not players_data:
         print("No player data to display")
@@ -348,7 +371,7 @@ def display_six_factors_summary(players_data, season="2024"):
     df = pd.DataFrame(players_data)
     
     print(f"\n" + "="*80)
-    print(f"SIX KEY FACTORS SUMMARY - {season} SEASON")
+    print(f"SEVEN KEY FACTORS SUMMARY - {season} SEASON")
     print("="*80)
     
     # Sort by overall score
@@ -358,11 +381,10 @@ def display_six_factors_summary(players_data, season="2024"):
     print("-" * 80)
     
     for i, (_, player) in enumerate(df_sorted.head(20).iterrows()):
-        team_score_info = f" | Team Score: {player['Team_Score']:>6.1f}" if 'Team_Score' in player else ""
         print(f"\n{i+1:2d}. {player['Name']:<20} ({player['Team']:<3}) - {player['Position']:<2}")
-        print(f"     Overall Score: {player['Overall_Score']:>6.1f} | Type: {player['PlayerType']}{team_score_info}")
+        print(f"     Overall Score: {player['Overall_Score']:>6.1f} | Type: {player['PlayerType']}")
         
-        # Show only the 6 key factors
+        # Show only the 7 key factors
         if player['Hitting_Score'] > 0:
             print(f"     🏏 Hitting: {player['Hitting_Score']:>6.1f} - {player['Hitting_Key']}")
         
@@ -378,25 +400,20 @@ def display_six_factors_summary(players_data, season="2024"):
         if player['Form_Score'] > 0:
             print(f"     📈 Form: {player['Form_Score']:>6.1f} - {player['Form_Key']}")
         
-        if player['Consistency_Score'] > 0:
-            print(f"     ⚙️  Consistency: {player['Consistency_Score']:>6.1f} - {player['Consistency_Key']}")
+        if player['Umpire_Impact_Score'] > 0:
+            print(f"     ⚙️  Umpire Impact: {player['Umpire_Impact_Score']:>6.1f} - {player['Umpire_Impact_Key']}")
+        
+        if player['Bullpen_Fatigue_Score'] != 0:
+            print(f"     🥱 Bullpen Fatigue: {player['Bullpen_Fatigue_Score']:>6.1f} - {player['Bullpen_Fatigue_Key']}")
     
     # Summary statistics
     print(f"\n" + "="*80)
-    print("SUMMARY OF SIX KEY FACTORS:")
+    print("SUMMARY OF SEVEN KEY FACTORS:")
     print("="*80)
     
     print(f"Total Players Analyzed: {len(df)}")
     print(f"Pitchers: {len(df[df['PlayerType'] == 'Pitcher'])}")
     print(f"Batters: {len(df[df['PlayerType'] == 'Batter'])}")
-    
-    # Display team rankings
-    if 'Team_Score' in df.columns:
-        team_scores = calculate_team_scores(players_data)
-        print(f"\nTEAM RANKINGS BY TOTAL PLAYER SCORES:")
-        print("-" * 50)
-        for i, (_, team) in enumerate(team_scores.iterrows()):
-            print(f"{i+1:2d}. {team['Team']:<3} - Total Score: {team['Team_Score']:>8.1f}")
     
     print(f"\nScore Ranges:")
     print(f"Hitting: {df['Hitting_Score'].min():.1f} - {df['Hitting_Score'].max():.1f}")
@@ -404,26 +421,25 @@ def display_six_factors_summary(players_data, season="2024"):
     print(f"Clutch: {df['Clutch_Score'].min():.1f} - {df['Clutch_Score'].max():.1f}")
     print(f"Speed: {df['Speed_Score'].min():.1f} - {df['Speed_Score'].max():.1f}")
     print(f"Form: {df['Form_Score'].min():.1f} - {df['Form_Score'].max():.1f}")
-    print(f"Consistency: {df['Consistency_Score'].min():.1f} - {df['Consistency_Score'].max():.1f}")
+    print(f"Umpire Impact: {df['Umpire_Impact_Score'].min():.1f} - {df['Umpire_Impact_Score'].max():.1f}")
+    print(f"Bullpen Fatigue: {df['Bullpen_Fatigue_Score'].min():.1f} - {df['Bullpen_Fatigue_Score'].max():.1f}")
     print(f"Overall: {df['Overall_Score'].min():.1f} - {df['Overall_Score'].max():.1f}")
-    if 'Team_Score' in df.columns:
-        print(f"Team Score: {df['Team_Score'].min():.1f} - {df['Team_Score'].max():.1f}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Fetch ONLY the 6 key factors for ALL TEAMS for the 2024 season")
+    parser = argparse.ArgumentParser(description="Fetch the 7 key factors for ALL TEAMS for the 2024 season")
     parser.add_argument("--out-dir", type=str, default=RESULT_DIR, help="Output directory for files")
     args = parser.parse_args()
     
     result_dir = args.out_dir
     
-    print(f"=== MLB SIX KEY FACTORS FETCHER - 2024 SEASON ===")
+    print(f"=== MLB SEVEN KEY FACTORS FETCHER - 2024 SEASON ===")
     print(f"Output Directory: {result_dir}")
     print("=" * 50)
     
-    # Fetch only the 6 key factors for 2024 season
-    all_players_six_factors, projections = fetch_six_factors_for_2024_season()
+    # Fetch the 7 key factors for 2024 season
+    all_players_seven_factors, projections = fetch_seven_factors_for_2024_season()
     
-    if not all_players_six_factors:
+    if not all_players_seven_factors:
         print(f"No players found for 2024 season")
         return
     
@@ -431,41 +447,31 @@ def main():
     os.makedirs(result_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Add team scores to player data
-    all_players_with_team_scores = add_team_scores_to_players(all_players_six_factors)
+    # Prepare player data for output
+    all_players_data = prepare_players_data(all_players_seven_factors)
     
     # Save player data to file (excluding the detailed "_Key" columns)
     output_file = os.path.join(result_dir, "mlb_2024_players_score.csv")
-    df = pd.DataFrame(all_players_with_team_scores)
+    df = pd.DataFrame(all_players_data)
     
     # Remove the detailed "_Key" columns for cleaner CSV output
-    key_columns = ['Hitting_Key', 'Pitching_Key', 'Clutch_Key', 'Speed_Key', 'Form_Key', 'Consistency_Key']
+    key_columns = ['Hitting_Key', 'Pitching_Key', 'Clutch_Key', 'Speed_Key', 'Form_Key', 'Umpire_Impact_Key', 'Bullpen_Fatigue_Key']
     df_clean = df.drop(columns=[col for col in key_columns if col in df.columns])
     
     df_clean = df_clean.sort_values(['Team', 'PlayerType', 'Overall_Score'], ascending=[True, True, False])
     df_clean.to_csv(output_file, index=False)
     
-    # Save team scores to separate file
-    team_scores = calculate_team_scores(all_players_six_factors)
-    team_scores_file = os.path.join(result_dir, "mlb_2024_teams_score.csv")
-    team_scores.to_csv(team_scores_file, index=False)
-    
     print(f"\nSaved PLAYER SCORES: {output_file}")
     print(f"Total player records: {len(df_clean)}")
     print(f"Columns: {len(df_clean.columns)} (clean version without detailed breakdowns)")
     
-    print(f"\nSaved TEAM SCORES: {team_scores_file}")
-    print(f"Total teams: {len(team_scores)}")
-    print(f"Team score range: {team_scores['Team_Score'].min():.1f} - {team_scores['Team_Score'].max():.1f}")
-    
     # Display summary
-    display_six_factors_summary(all_players_with_team_scores, "2024")
+    display_seven_factors_summary(all_players_data, "2024")
     
     print(f"\n=== FETCH COMPLETE ===")
-    print(f"Only the 6 key factors have been extracted and saved for the 2024 season!")
+    print(f"The 7 key factors have been extracted and saved for the 2024 season!")
     print(f"Files created:")
-    print(f"  - {os.path.basename(output_file)} (Player data with team scores)")
-    print(f"  - {os.path.basename(team_scores_file)} (Team rankings)")
+    print(f"  - {os.path.basename(output_file)} (Player data with 7 key factors)")
 
 if __name__ == "__main__":
     main() 

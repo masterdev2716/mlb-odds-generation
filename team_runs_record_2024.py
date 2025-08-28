@@ -207,7 +207,7 @@ def save_matchups(all_matchups, filename="mlb_2024_head_to_head.csv"):
                 # Format team pair name (e.g., "LAD vs SD")
                 team_pair_name = team_pair_key.replace('_', ' vs ')
                 
-                # Calculate total scores for this team pair (sum of all runs, then divide by game count)
+                # Calculate total scores for this team pair with home/away adjustments
                 team_a_total_score = 0
                 team_b_total_score = 0
                 game_count = len(matchups)
@@ -217,48 +217,48 @@ def save_matchups(all_matchups, filename="mlb_2024_head_to_head.csv"):
                 team_a = teams_in_pair[0]  # First team (e.g., "LAD")
                 team_b = teams_in_pair[2]  # Second team (e.g., "SD")
                 
-                # Calculate total scores for all games in this pair (simple addition)
+                # Calculate total scores for all games in this pair with home/away multipliers
                 for matchup in matchups:
                     if matchup['AwayTeam'] == team_a:
-                        # TeamA was away team
+                        # TeamA was away team - multiply by 1.1
                         runs = matchup['AwayTeamRuns'] if matchup['AwayTeamRuns'] is not None else 0
-                        team_a_total_score += runs
+                        team_a_total_score += runs * 1.1
                         
-                        # TeamB was home team
+                        # TeamB was home team - multiply by 0.9
                         runs = matchup['HomeTeamRuns'] if matchup['HomeTeamRuns'] is not None else 0
-                        team_b_total_score += runs
+                        team_b_total_score += runs * 0.9
                         
                     elif matchup['HomeTeam'] == team_a:
-                        # TeamA was home team
+                        # TeamA was home team - multiply by 0.9
                         runs = matchup['HomeTeamRuns'] if matchup['HomeTeamRuns'] is not None else 0
-                        team_a_total_score += runs
+                        team_a_total_score += runs * 0.9
                         
-                        # TeamB was away team
+                        # TeamB was away team - multiply by 1.1
                         runs = matchup['AwayTeamRuns'] if matchup['AwayTeamRuns'] is not None else 0
-                        team_b_total_score += runs
+                        team_b_total_score += runs * 1.1
                         
                     elif matchup['AwayTeam'] == team_b:
-                        # TeamB was away team
+                        # TeamB was away team - multiply by 1.1
                         runs = matchup['AwayTeamRuns'] if matchup['AwayTeamRuns'] is not None else 0
-                        team_b_total_score += runs
+                        team_b_total_score += runs * 1.1
                         
-                        # TeamA was home team
+                        # TeamA was home team - multiply by 0.9
                         runs = matchup['HomeTeamRuns'] if matchup['HomeTeamRuns'] is not None else 0
-                        team_a_total_score += runs
+                        team_a_total_score += runs * 0.9
                         
                     elif matchup['HomeTeam'] == team_b:
-                        # TeamB was home team
+                        # TeamB was home team - multiply by 0.9
                         runs = matchup['HomeTeamRuns'] if matchup['HomeTeamRuns'] is not None else 0
-                        team_b_total_score += runs
+                        team_b_total_score += runs * 0.9
                         
-                        # TeamA was away team
+                        # TeamA was away team - multiply by 1.1
                         runs = matchup['AwayTeamRuns'] if matchup['AwayTeamRuns'] is not None else 0
-                        team_a_total_score += runs
+                        team_a_total_score += runs * 1.1
                 
-                # Divide by game count to get average runs per game
+                # Divide by game count to get average adjusted runs per game
                 if game_count > 0:
-                    team_a_total_score = round(team_a_total_score / game_count, 1)
-                    team_b_total_score = round(team_b_total_score / game_count, 1)
+                    team_a_total_score = round(team_a_total_score / game_count, 2)
+                    team_b_total_score = round(team_b_total_score / game_count, 2)
                 
                 for i, matchup in enumerate(matchups):
                     # Convert date format from YYYY-MM-DD to M/D/YYYY
@@ -297,11 +297,8 @@ def save_matchups(all_matchups, filename="mlb_2024_head_to_head.csv"):
                         team_pair_display = team_pair_name
                         team_a_score_display = team_a_total_score
                         team_b_score_display = team_b_total_score
-                        # Calculate prediction range with ±0.4 absolute error
-                        base_prediction = team_a_total_score + team_b_total_score
-                        lower_bound = round(base_prediction - 0.4, 1)
-                        upper_bound = round(base_prediction + 0.4, 1)
-                        prediction_overunder = f"{lower_bound}-{upper_bound}"
+                        # Prediction as total of TeamA and TeamB scores (no absolute error range)
+                        prediction_overunder = round(team_a_total_score + team_b_total_score, 2)
                     else:
                         team_pair_display = ""
                         team_a_score_display = ""
@@ -325,8 +322,8 @@ def save_matchups(all_matchups, filename="mlb_2024_head_to_head.csv"):
         print(f"Successfully saved matchups in image format to {full_path}")
         print(f"Format exactly matches the uploaded image structure with TeamA Score, TeamB Score, and Prediction_OverUnder")
         print(f"Columns: Team Pair, GameID, GameDate, TeamA runs, TeamB runs, Home Team, Away Team, TeamA Score, TeamB Score, Prediction_OverUnder")
-        print(f"Scoring: Average runs per game (sum of all runs divided by number of games)")
-        print(f"Prediction_OverUnder: Range format (TeamA Score + TeamB Score ± 0.4) e.g., 8.7-9.5")
+        print(f"Scoring: Average adjusted runs per game with home/away multipliers (Home: ×0.9, Away: ×1.1)")
+        print(f"Prediction_OverUnder: Total projected runs (TeamA Score + TeamB Score)")
         
     except Exception as e:
         print(f"Error saving to CSV: {e}")
@@ -604,7 +601,7 @@ def generate_complete_2024_dataset():
     print("\nDataset generation complete!")
     print("File saved: mlb_2024_head_to_head.csv")
     print("Location: 'data' folder")
-    print("Includes average scoring: Sum of all runs divided by number of games between the two teams")
+    print("Includes average adjusted scoring: Home team runs ×0.9, Away team runs ×1.1, then averaged")
 
 
 
